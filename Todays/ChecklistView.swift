@@ -10,16 +10,27 @@ struct ChecklistView: View {
     @Binding var barCompact: Bool
     @AppStorage("todos") private var saved = "[]"
     @State private var todos: [TodoItem] = []
+
+    // 새 항목 추가
     @State private var isAdding = false
     @State private var newText = ""
     @FocusState private var focused: Bool
 
+    // 항목 수정
+    @State private var editingID: UUID? = nil
+    @State private var editText = ""
+    @FocusState private var editFocused: Bool
+
+    // 체크한 항목 삭제 확인창
+    @State private var showClearConfirm = false
+
     private var today: Date { Date() }
+    private var doneCount: Int { todos.filter { $0.done }.count }
 
     var body: some View {
         VStack(spacing: 0) {
-            // 상단: 오늘 날짜 + 추가 버튼
-            HStack(alignment: .firstTextBaseline) {
+            // 상단: 오늘 날짜 + 버튼들
+            HStack(alignment: .center) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(today, format: .dateTime.weekday(.wide))
                         .font(.title2.bold())
@@ -29,6 +40,18 @@ struct ChecklistView: View {
                 .environment(\.locale, Locale(identifier: "ko_KR"))
 
                 Spacer()
+
+                // 체크한 항목이 있을 때만 보이는 전체 삭제 버튼
+                if doneCount > 0 {
+                    Button {
+                        showClearConfirm = true
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 36, height: 36)
+                    }
+                }
 
                 Button {
                     startAdding()
@@ -59,9 +82,28 @@ struct ChecklistView: View {
                             }
                             .buttonStyle(.plain)
 
-                            Text(item.text)
-                                .strikethrough(item.done)
-                                .foregroundStyle(item.done ? .secondary : .primary)
+                            if editingID == item.id {
+                                // 수정 중: 입력창으로 바뀜
+                                TextField("할 일", text: $editText)
+                                    .focused($editFocused)
+                                    .submitLabel(.done)
+                                    .onSubmit {
+                                        finishEditing()
+                                    }
+                                    .onAppear {
+                                        editFocused = true
+                                    }
+                            } else {
+                                // 평소: 글자를 누르면 수정 시작
+                                Text(item.text)
+                                    .strikethrough(item.done)
+                                    .foregroundStyle(item.done ? .secondary : .primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        startEditing(item)
+                                    }
+                            }
                         }
                     }
                     .onDelete { offsets in
@@ -100,6 +142,16 @@ struct ChecklistView: View {
                 )
             }
         }
+        .confirmationDialog(
+            "체크한 항목 \(doneCount)개를 삭제할까요?",
+            isPresented: $showClearConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("삭제", role: .destructive) {
+                todos.removeAll { $0.done }
+            }
+            Button("취소", role: .cancel) {}
+        }
         .onAppear {
             load()
         }
@@ -114,15 +166,20 @@ struct ChecklistView: View {
                 finishAdding()
             }
         }
+        .onChange(of: editFocused) {
+            if !editFocused && editingID != nil {
+                finishEditing()
+            }
+        }
     }
 
-    // MARK: - 추가 동작
+    // MARK: - 추가
     func startAdding() {
         isAdding = true
         focused = true
     }
 
-    // 엔터를 눌렀을 때: 내용이 있으면 추가하고 계속 입력, 비어 있으면 입력 종료
+    // 엔터: 내용이 있으면 추가하고 계속 입력, 비어 있으면 입력 종료
     func commit() {
         let text = newText.trimmingCharacters(in: .whitespaces)
         if text.isEmpty {
@@ -144,6 +201,22 @@ struct ChecklistView: View {
         isAdding = false
     }
 
+    // MARK: - 수정
+    func startEditing(_ item: TodoItem) {
+        editText = item.text
+        editingID = item.id
+    }
+
+    func finishEditing() {
+        guard let id = editingID else { return }
+        let text = editText.trimmingCharacters(in: .whitespaces)
+        // 비워 두면 원래 내용을 그대로 유지
+        if !text.isEmpty, let i = todos.firstIndex(where: { $0.id == id }) {
+            todos[i].text = text
+        }
+        editingID = nil
+    }
+
     // MARK: - 저장 / 불러오기
     func save() {
         if let data = try? JSONEncoder().encode(todos),
@@ -162,6 +235,7 @@ struct ChecklistView: View {
 
 // 항목이 없을 때 보이는 안내
 struct EmptyHint: View {
+    var message: String = "아직 내용이 없어요.\n체크리스트를 만들어주세요"
     @State private var up = false
 
     var body: some View {
@@ -174,7 +248,7 @@ struct EmptyHint: View {
                     .offset(y: up ? -6 : 0)
                     .padding(.trailing, 28)
             }
-            Text("아직 내용이 없어요.\n체크리스트를 만들어주세요!")
+            Text(message)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
         }
@@ -184,8 +258,4 @@ struct EmptyHint: View {
             }
         }
     }
-}
-
-#Preview {
-    ChecklistView(barCompact: .constant(false))
 }
